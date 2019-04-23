@@ -21,7 +21,6 @@
 #ifndef AVCODEC_QSV_H
 #define AVCODEC_QSV_H
 
-#include <mfx/mfxvideo.h>
 
 typedef struct AVQSVContext {
     mfxSession session;

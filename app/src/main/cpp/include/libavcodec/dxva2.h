@@ -35,8 +35,8 @@
 #endif
 
 #include <stdint.h>
-#include <d3d9.h>
-#include <dxva2api.h>
+//#include <d3d9.h>
+//#include <dxva2api.h>
 
 /**
  * @defgroup lavc_codec_hwaccel_dxva2 DXVA2
@@ -47,6 +47,7 @@
 
 #define FF_DXVA2_WORKAROUND_SCALING_LIST_ZIGZAG 1 ///< Work around for DXVA2 and old UVD/UVD+ ATI video cards
 #define FF_DXVA2_WORKAROUND_INTEL_CLEARVIDEO    2 ///< Work around for DXVA2 and old Intel GPUs with ClearVideo interface
+
 
 /**
  * This structure is used to provides the necessary configurations and data

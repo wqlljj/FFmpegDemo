@@ -1,6 +1,6 @@
 
 cmake_minimum_required(VERSION 3.4.1)
-
+include_directories(src/main/cpp/include/)
 add_library( # Sets the name of the library.
              native-lib
              # Sets the library as a shared library.
@@ -74,8 +74,6 @@ add_library( yuv
 set_target_properties( yuv
          PROPERTIES IMPORTED_LOCATION
          ${distribution_DIR}/${ANDROID_ABI}/libyuv.so)
-include_directories(src/main/cpp/include/ffmpeg)
-include_directories(src/main/cpp/include/libyuv)
 target_link_libraries( # Specifies the target library.
                        native-lib
                        avcodec

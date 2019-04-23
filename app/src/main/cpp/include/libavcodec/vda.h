@@ -38,7 +38,6 @@
 #undef __GNUC_STDC_INLINE__
 
 #define Picture QuickdrawPicture
-#include <VideoDecodeAcceleration/VDADecoder.h>
 #undef Picture
 
 #include "../libavcodec/version.h"

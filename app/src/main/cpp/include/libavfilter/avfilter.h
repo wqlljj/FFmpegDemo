@@ -44,7 +44,7 @@
 #include "../libavutil/pixfmt.h"
 #include "../libavutil/rational.h"
 
-#include "../libavfilter/version.h"
+#include "version.h"
 
 /**
  * Return the LIBAVFILTER_VERSION_INT constant.

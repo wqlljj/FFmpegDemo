@@ -268,12 +268,9 @@
 
 #include <time.h>
 #include <stdio.h>  /* FILE */
+#include <libavcodec/avcodec.h>
 
 #include "avio.h"
-#include "../libavcodec/avcodec.h"
-#include "../libavutil/log.h"
-#include "../libavutil/dict.h"
-#include "../libavutil/frame.h"
 
 struct AVFormatContext;
 

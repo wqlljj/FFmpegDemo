@@ -6,19 +6,14 @@
 #include <android/log.h>
 #include <android/native_window_jni.h>
 #include <android/native_window.h>
+extern "C" {
+#include "libavformat/avformat.h"
+#include "libyuv/convert_argb.h"
+}
+#include "libyuv.h"
+
 #define LOGI(FORMAT,...) __android_log_print(ANDROID_LOG_INFO,"jason",FORMAT,##__VA_ARGS__);
 #define LOGE(FORMAT,...) __android_log_print(ANDROID_LOG_ERROR,"jason",FORMAT,##__VA_ARGS__);
-
-
-//封装格式
-#include "include/ffmpeg/libavformat/avformat.h"
-//解码
-#include "include/ffmpeg/libavcodec/avcodec.h"
-//缩放
-#include "include/ffmpeg/libswscale/swscale.h"
-#include "include/ffmpeg/libavutil/avutil.h"
-#include "include/ffmpeg/libavutil/frame.h"
-#include "include/libyuv/libyuv.h"
 
 
 extern "C"
@@ -97,10 +92,10 @@ JNIEXPORT void JNICALL Java_com_dongnaoedu_dnffmpegplayer_JasonPlayer_render
 
             //设置rgb_frame的属性（像素格式、宽高）和缓冲区
             //rgb_frame缓冲区与outBuffer.bits是同一块内存
-            avpicture_fill((AVPicture *)rgb_frame, outBuffer.bits, PIX_FMT_RGBA, pCodeCtx->width, pCodeCtx->height);
+            avpicture_fill((AVPicture *)rgb_frame, (const uint8_t *) outBuffer.bits, PIX_FMT_RGBA, pCodeCtx->width, pCodeCtx->height);
 
             //YUV->RGBA_8888
-            I420ToARGB(yuv_frame->data[0],yuv_frame->linesize[0],
+            libyuv::I420ToARGB(yuv_frame->data[0],yuv_frame->linesize[0],
                        yuv_frame->data[2],yuv_frame->linesize[2],
                        yuv_frame->data[1],yuv_frame->linesize[1],
                        rgb_frame->data[0], rgb_frame->linesize[0],
