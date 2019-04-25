@@ -68,8 +68,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             @Override
             public void run() {
                 super.run();
+                Surface surface = videoView.getHolder().getSurface();
                 play("/storage/emulated/0/kugou/mv/光年之外-art--G.E.M.邓紫棋--art-14a694dd09e9f655f0485b4d06a1ac4f.mp4",
-                        videoView.getHolder().getSurface());
+                        surface);
             }
         }.start();
 

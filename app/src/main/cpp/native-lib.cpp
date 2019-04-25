@@ -29,32 +29,53 @@ bool check(JNIEnv *env) {
 static const int kTileX = 8;
 static const int kTileY = 8;
 
-static int TileARGBScale(const uint8 *src_argb, int src_stride_argb,
-                         int src_width, int src_height,
-                         uint8 *dst_argb, int dst_stride_argb,
-                         int dst_width, int dst_height,
-                         libyuv::FilterMode filtering) {
-    for (int y = 0; y < dst_height; y += kTileY) {
-        for (int x = 0; x < dst_width; x += kTileX) {
-            int clip_width = kTileX;
-            if (x + clip_width > dst_width) {
-                clip_width = dst_width - x;
-            }
-            int clip_height = kTileY;
-            if (y + clip_height > dst_height) {
-                clip_height = dst_height - y;
-            }
-            int r = ARGBScaleClip(src_argb, src_stride_argb,
-                                  src_width, src_height,
-                                  dst_argb, dst_stride_argb,
-                                  dst_width, dst_height,
-                                  x, y, clip_width, clip_height, filtering);
-            if (r) {
-                return r;
-            }
-        }
+void scaleI420(jbyte *src_i420_data, jint width, jint height, jbyte *dst_i420_data, jint dst_width,
+               jint dst_height, jint mode) {
+
+    jint src_i420_y_size = width * height;
+    jint src_i420_u_size = (width >> 1) * (height >> 1);
+    jbyte *src_i420_y_data = src_i420_data;
+    jbyte *src_i420_u_data = src_i420_data + src_i420_y_size;
+    jbyte *src_i420_v_data = src_i420_data + src_i420_y_size + src_i420_u_size;
+
+    jint dst_i420_y_size = dst_width * dst_height;
+    jint dst_i420_u_size = (dst_width >> 1) * (dst_height >> 1);
+    jbyte *dst_i420_y_data = dst_i420_data;
+    jbyte *dst_i420_u_data = dst_i420_data + dst_i420_y_size;
+    jbyte *dst_i420_v_data = dst_i420_data + dst_i420_y_size + dst_i420_u_size;
+
+    libyuv::I420Scale((const uint8 *) src_i420_y_data, width,
+                      (const uint8 *) src_i420_u_data, width >> 1,
+                      (const uint8 *) src_i420_v_data, width >> 1,
+                      width, height,
+                      (uint8 *) dst_i420_y_data, dst_width,
+                      (uint8 *) dst_i420_u_data, dst_width >> 1,
+                      (uint8 *) dst_i420_v_data, dst_width >> 1,
+                      dst_width, dst_height,
+                      (libyuv::FilterMode) mode);
+}
+void rotateI420(jbyte *src_i420_data, jint width, jint height, jbyte *dst_i420_data, jint degree) {
+    jint src_i420_y_size = width * height;
+    jint src_i420_u_size = (width >> 1) * (height >> 1);
+
+    jbyte *src_i420_y_data = src_i420_data;
+    jbyte *src_i420_u_data = src_i420_data + src_i420_y_size;
+    jbyte *src_i420_v_data = src_i420_data + src_i420_y_size + src_i420_u_size;
+
+    jbyte *dst_i420_y_data = dst_i420_data;
+    jbyte *dst_i420_u_data = dst_i420_data + src_i420_y_size;
+    jbyte *dst_i420_v_data = dst_i420_data + src_i420_y_size + src_i420_u_size;
+
+    if (degree == libyuv::kRotate90 || degree == libyuv::kRotate270) {
+        libyuv::I420Rotate((const uint8 *) src_i420_y_data, width,
+                           (const uint8 *) src_i420_u_data, width >> 1,
+                           (const uint8 *) src_i420_v_data, width >> 1,
+                           (uint8 *) dst_i420_y_data, height,
+                           (uint8 *) dst_i420_u_data, height >> 1,
+                           (uint8 *) dst_i420_v_data, height >> 1,
+                           width, height,
+                           (libyuv::RotationMode) degree);
     }
-    return 0;
 }
 
 extern "C"
@@ -105,7 +126,7 @@ JNIEXPORT void JNICALL Java_com_example_wqllj_ffmpegdemo_MainActivity_play
         return;
     }
     LOGI("视频宽高  %d  %d", pCodeCtx->width, pCodeCtx->height)
-    LOGI("视频帧率  %d", pCodeCtx->bit_rate)
+    LOGI("视频帧  %d", pCodeCtx->bit_rate)
     LOGI("解码器名称 %s", pCodec->name)
     //5.打开解码器
     if (avcodec_open2(pCodeCtx, pCodec, NULL) < 0) {
@@ -118,8 +139,6 @@ JNIEXPORT void JNICALL Java_com_example_wqllj_ffmpegdemo_MainActivity_play
     check(env);
     //像素数据（解码数据）
     AVFrame *yuv_frame = av_frame_alloc();
-
-    AVFrame *yuv_scale_frame = av_frame_alloc();
     check(env);
     AVFrame *rgb_frame = av_frame_alloc();
     check(env);
@@ -140,14 +159,9 @@ JNIEXPORT void JNICALL Java_com_example_wqllj_ffmpegdemo_MainActivity_play
     //6.一阵一阵读取压缩的视频数据AVPacket
     if (nativeWindow != NULL) {
         while (av_read_frame(pFormatCtx, packet) >= 0) {
-            if (check(env)) {
-                break;
-            }
+
             //解码AVPacket->AVFrame
             len = avcodec_decode_video2(pCodeCtx, yuv_frame, &got_frame, packet);
-            if (check(env)) {
-                break;
-            }
             //Zero if no frame could be decompressed
             //非零，正在解码
             if (got_frame) {
@@ -155,72 +169,43 @@ JNIEXPORT void JNICALL Java_com_example_wqllj_ffmpegdemo_MainActivity_play
 //                LOGI("宽 %d 高 %d", nativeWindow, +pCodeCtx->height);
                 //lock
                 //设置缓冲区的属性（宽、高、像素格式）
-                ANativeWindow_setBuffersGeometry(nativeWindow, pCodeCtx->width, pCodeCtx->height,
+                ANativeWindow_setBuffersGeometry(nativeWindow, width, height,
                                                  WINDOW_FORMAT_RGBA_8888);
-                if (check(env)) {
-                    break;
-                }
                 ANativeWindow_lock(nativeWindow, &outBuffer, NULL);
-                if (check(env)) {
-                    break;
-                }
                 //设置rgb_frame的属性（像素格式、宽高）和缓冲区
                 //rgb_frame缓冲区与outBuffer.bits是同一块内存
                 avpicture_fill((AVPicture *) rgb_frame, (const uint8_t *) outBuffer.bits,
                                PIX_FMT_RGBA,
-                               pCodeCtx->width, pCodeCtx->height);
-                if (check(env)) {
-                    break;
-                }
-//                sws_getContext();
-//                sws_scale();
-
+                               width, height);
+                LOGI("outBuffer.stride = %d  %d   %d",outBuffer.stride,outBuffer.width,outBuffer.height);
 //                if (!yuv_scale_frame->linesize[0]) {
 //                    //只有指定了AVFrame的像素格式、画面大小才能真正分配内存
 //                    //缓冲区分配内存
 //
 //                    uint8_t *out_buffer = (uint8_t *) av_malloc(
-//                            avpicture_get_size(AV_PIX_FMT_RGBA, pCodeCtx->width, pCodeCtx->height));
+//                            avpicture_get_size(AV_PIX_FMT_RGBA, width, height));
 //                    //初始化缓冲区
 //                    avpicture_fill((AVPicture *) yuv_scale_frame, out_buffer, AV_PIX_FMT_RGBA,
 //                                   width, height);
 //
 //                }
-                sws_scale(sws_ctx,
+                rgb_frame->linesize[0] = outBuffer.stride*2;
+                LOGI("rgb_frame宽高1 %d %d %d  %d",yuv_frame->height ,rgb_frame->width,rgb_frame->height,rgb_frame->linesize[0])
+                int h = sws_scale(sws_ctx,
                           (const uint8_t *const *) yuv_frame->data, yuv_frame->linesize, 0, yuv_frame->height,
                           rgb_frame->data, rgb_frame->linesize);
-//                libyuv::I420Scale(yuv_frame->data[0],pCodeCtx->width,yuv_frame->data[1],pCodeCtx->width >> 1,
-//                                  yuv_frame->data[2],pCodeCtx->width >> 1,pCodeCtx->width,pCodeCtx->height,
-//                                  yuv_scale_frame->data[0],width,yuv_scale_frame->data[1],width >> 1,
-//                                  yuv_scale_frame->data[2],width >> 1,width,height,libyuv::kFilterNone);
-                //YUV->RGBA_8888
-//                libyuv::I420ToARGB(yuv_scale_frame->data[0], yuv_scale_frame->linesize[0],
-//                                   yuv_scale_frame->data[2], yuv_scale_frame->linesize[2],
-//                                   yuv_scale_frame->data[1], yuv_scale_frame->linesize[1],
-//                                   rgb_frame->data[0], rgb_frame->linesize[0],
-//                                   width, height);
-//                if(!yuv_scale_frame->linesize[0]){
-//                    yuv_scale_frame->data[0] = (uint8_t *) calloc(pCodeCtx->width*pCodeCtx->height, sizeof(char));
-//                    yuv_scale_frame->linesize[0] = sizeof(pCodeCtx->width*pCodeCtx->height);
-//                    LOGI("calloc %d",pCodeCtx->width*pCodeCtx->height);
-//                }
-//                libyuv::I420ToARGB(yuv_frame->data[0], yuv_frame->linesize[0],
-//                                   yuv_frame->data[2], yuv_frame->linesize[2],
-//                                   yuv_frame->data[1], yuv_frame->linesize[1],
-//                                   yuv_scale_frame->data[0], yuv_scale_frame->linesize[0],
-//                                   pCodeCtx->width, pCodeCtx->height);
-//                TileARGBScale(yuv_scale_frame->data[0],yuv_scale_frame->linesize[0],
-//                              pCodeCtx->width, pCodeCtx->height,
-//                              rgb_frame->data[0], rgb_frame->linesize[0],
-//                width,height,libyuv::kFilterNone);
-//                LOGI("pCodeCtx %d   %d rgb_frame %d   %d  %d   %d",pCodeCtx->width, pCodeCtx->height,width,height,yuv_scale_frame->linesize[0],rgb_frame->linesize[0])
+
+                LOGI("rgb_frame宽高2 %d   %d  %d %d  %d",yuv_frame->height ,h,rgb_frame->width,rgb_frame->height,rgb_frame->linesize[0])
 
 
-//                libyuv::I420ToARGB(yuv_frame->data[0], yuv_frame->linesize[0],
+//                int h=libyuv::I420ToARGB(yuv_frame->data[0], yuv_frame->linesize[0],
 //                                   yuv_frame->data[2], yuv_frame->linesize[2],
 //                                   yuv_frame->data[1], yuv_frame->linesize[1],
 //                                   rgb_frame->data[0], rgb_frame->linesize[0],
 //                                   pCodeCtx->width, pCodeCtx->height);
+//                                LOGI("rgb_frame宽高2 %d   %d  %d %d ", yuv_frame->height, h,
+//                                     rgb_frame->width, rgb_frame->height)
+
                 if (check(env)) {
                     break;
                 }
@@ -245,6 +230,7 @@ JNIEXPORT void JNICALL Java_com_example_wqllj_ffmpegdemo_MainActivity_play
     if (nativeWindow) {
         ANativeWindow_release(nativeWindow);
     }
+    sws_freeContext(sws_ctx);
     check(env);
     av_frame_free(&yuv_frame);
     check(env);
