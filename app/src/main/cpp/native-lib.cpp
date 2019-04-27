@@ -55,6 +55,7 @@ void scaleI420(jbyte *src_i420_data, jint width, jint height, jbyte *dst_i420_da
                       dst_width, dst_height,
                       (libyuv::FilterMode) mode);
 }
+
 void rotateI420(jbyte *src_i420_data, jint width, jint height, jbyte *dst_i420_data, jint degree) {
     jint src_i420_y_size = width * height;
     jint src_i420_u_size = (width >> 1) * (height >> 1);
@@ -101,7 +102,7 @@ JNIEXPORT void JNICALL Java_com_example_wqllj_ffmpegdemo_MainActivity_play
         return;
     }
     LOGI("视频格式 %s", pFormatCtx->iformat->name)
-    LOGI("视频时长 %d", (int)(pFormatCtx->duration / AV_TIME_BASE))
+    LOGI("视频时长 %d", (int) (pFormatCtx->duration / AV_TIME_BASE))
 
     //视频解码，需要找到视频对应的AVStream所在pFormatCtx->streams的索引位置
     int video_stream_idx = -1;
@@ -111,33 +112,37 @@ JNIEXPORT void JNICALL Java_com_example_wqllj_ffmpegdemo_MainActivity_play
         //根据类型判断，是否是视频流
         if (pFormatCtx->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO) {
             video_stream_idx = i;
-        }else if(pFormatCtx->streams[i]->codec->codec_type == AVMEDIA_TYPE_AUDIO){
+        } else if (pFormatCtx->streams[i]->codec->codec_type == AVMEDIA_TYPE_AUDIO) {
             audio_stream_idx = i;
         }
     }
-    LOGI("video_stream_idx =  %d audio_stream_idx = %d", video_stream_idx,audio_stream_idx)
-
-    //4.获取视频解码器
-    AVCodecContext *pCodeCtx = pFormatCtx->streams[video_stream_idx]->codec;
-    AVCodec *pCodec = avcodec_find_decoder(pCodeCtx->codec_id);
-    if (pCodec == NULL) {
-        LOGE("%s", "视频无法解码");
-        return;
+    LOGI("video_stream_idx =  %d audio_stream_idx = %d", video_stream_idx, audio_stream_idx)
+    AVCodecContext *pCodeCtx;
+    AVCodec *pCodec;
+    if(video_stream_idx != -1) {
+        //4.获取视频解码器
+         pCodeCtx = pFormatCtx->streams[video_stream_idx]->codec;
+         pCodec = avcodec_find_decoder(pCodeCtx->codec_id);
+        if (pCodec == NULL) {
+            LOGE("%s", "视频无法解码");
+//        return;
+        } else {
+            LOGI("视频宽高  %d  %d", pCodeCtx->width, pCodeCtx->height)
+            LOGI("视频帧  %d", pCodeCtx->bit_rate)
+            LOGI("解码器名称 %s", pCodec->name)
+        }
     }
-    LOGI("视频宽高  %d  %d", pCodeCtx->width, pCodeCtx->height)
-    LOGI("视频帧  %d", pCodeCtx->bit_rate)
-    LOGI("解码器名称 %s", pCodec->name)
     AVCodecContext *audioCodeCtx = pFormatCtx->streams[audio_stream_idx]->codec;
     AVCodec *audioCodec = avcodec_find_decoder(audioCodeCtx->codec_id);
     LOGI("音频解码器名称 %s", audioCodec->name)
-    if(audioCodec == NULL){
+    if (audioCodec == NULL) {
         LOGE("%s", "音频无法解码");
         return;
     }
     //5.打开解码器
-    if (avcodec_open2(pCodeCtx, pCodec, NULL) < 0) {
+    if (pCodec==NULL||avcodec_open2(pCodeCtx, pCodec, NULL) < 0) {
         LOGE("%s", "视频解码器无法打开");
-        return;
+//        return;
     }
     if (avcodec_open2(audioCodeCtx, audioCodec, NULL) < 0) {
         LOGE("%s", "音频解码器无法打开");
@@ -161,9 +166,9 @@ JNIEXPORT void JNICALL Java_com_example_wqllj_ffmpegdemo_MainActivity_play
     //av_get_default_channel_layout(codecCtx->channels);
     uint64_t in_chanel_layout = audioCodeCtx->channel_layout;
     uint64_t out_chanel_layout = AV_CH_LAYOUT_STEREO;
-    swr_alloc_set_opts(swrCtx,out_chanel_layout,
-    outSsmpleFmt,outSampleRate,in_chanel_layout,inSsmpleFmt,
-    inSampleRate,0,NULL);
+    swr_alloc_set_opts(swrCtx, out_chanel_layout,
+                       outSsmpleFmt, outSampleRate, in_chanel_layout, inSsmpleFmt,
+                       inSampleRate, 0, NULL);
     //native绘制
     //窗体
     ANativeWindow *nativeWindow = ANativeWindow_fromSurface(env, surface);
@@ -171,27 +176,35 @@ JNIEXPORT void JNICALL Java_com_example_wqllj_ffmpegdemo_MainActivity_play
     //绘制时的缓冲区
     ANativeWindow_Buffer outBuffer;
     int width = 400;
-    int height = (int) 400 * (1.0 * pCodeCtx->height / pCodeCtx->width);
-    //用于像素格式转换或者缩放
-    struct SwsContext *sws_ctx = sws_getContext(
-                    pCodeCtx->width, pCodeCtx->height, pCodeCtx->pix_fmt,
-                    width, height, AV_PIX_FMT_RGBA,
-                    SWS_BILINEAR, NULL, NULL, NULL);
+    int height =0;
+    struct SwsContext *sws_ctx;
+    if(pCodeCtx !=NULL) {
+        height = (int) 400 * (1.0 * pCodeCtx->height / pCodeCtx->width);
+        //用于像素格式转换或者缩放
+        sws_ctx = sws_getContext(
+                pCodeCtx->width, pCodeCtx->height, pCodeCtx->pix_fmt,
+                width, height, AV_PIX_FMT_RGBA,
+                SWS_BILINEAR, NULL, NULL, NULL);
+    }
     swr_init(swrCtx);
 //    输出文件
     // /storage/emulated/0/kugou/mv/光年之外-art--G.E.M.邓紫棋--art-14a694dd09e9f655f0485b4d06a1ac4f.mp4
     char path[100];
     std::string inPath(input_cstr);
-    sprintf(path,"/storage/emulated/0/kugou/mv/%s%s",inPath.substr(inPath.find_last_of("/")+1,inPath.find_last_of(".")-inPath.find_last_of("/")).c_str(),audioCodec->name);
-    LOGI("音频保存地址：%d  %d   %s",inPath.find_last_of("/")+1,inPath.find_last_of("."),path)
-    FILE *file = fopen(path,"wb");
+    sprintf(path, "%s%s%s", inPath.substr(0,inPath.find_last_of("/") + 1).c_str(),inPath.substr(inPath.find_last_of("/") + 1,
+                                                                     inPath.find_last_of(".") -
+                                                                     inPath.find_last_of(
+                                                                             "/")).c_str(),
+            "pcm");
+    LOGI("音频保存地址：%d  %d   %s", inPath.find_last_of("/") + 1, inPath.find_last_of("."), path)
+    FILE *file = fopen(path, "wb");
     //16bit 44100 PCM 数据
-    uint8_t *out_buffer = (uint8_t *)av_malloc(2*44100);
+    uint8_t *out_buffer = (uint8_t *) av_malloc(2 * 44100);
     int ret, got_frame, framecount = 0;
     //6.一阵一阵读取压缩的视频数据AVPacket
     if (nativeWindow != NULL) {
         while (av_read_frame(pFormatCtx, packet) >= 0) {
-            if(packet->stream_index == video_stream_idx) {
+            if (packet->stream_index == video_stream_idx) {
                 //解码AVPacket->AVFrame
                 ret = avcodec_decode_video2(pCodeCtx, yuv_frame, &got_frame, packet);
                 //Zero if no frame could be decompressed
@@ -254,14 +267,20 @@ JNIEXPORT void JNICALL Java_com_example_wqllj_ffmpegdemo_MainActivity_play
                     usleep(1000 * 16);
 
                 }
-            }else if(packet->stream_index == audio_stream_idx){
-                ret = avcodec_decode_audio4(audioCodeCtx,audio_frame,&got_frame,packet);
-                if(ret<0){
+            } else if (packet->stream_index == audio_stream_idx) {
+                ret = avcodec_decode_audio4(audioCodeCtx, audio_frame, &got_frame, packet);
+                if (ret < 0) {
                     LOGI("音频解码完成")
                 }
-                if(got_frame>0){
-                    LOGI("解码 %d",framecount++);
-                    fwrite(packet->data,1,packet->size,file);
+                if (got_frame > 0) {
+                    LOGI("解码 %d", framecount++);
+                    swr_convert(swrCtx, &out_buffer, 88200, (const uint8_t **) audio_frame->data,
+                                audio_frame->nb_samples);
+                    int out_buffer_size = av_samples_get_buffer_size(NULL, av_get_channel_layout_nb_channels(
+                            AV_CH_LAYOUT_STEREO), audio_frame->nb_samples,
+                                               audioCodeCtx->sample_fmt, 1);
+
+                    fwrite(out_buffer, 1, out_buffer_size, file);
                 }
             }
 

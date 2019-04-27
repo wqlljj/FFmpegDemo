@@ -69,7 +69,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             public void run() {
                 super.run();
                 Surface surface = videoView.getHolder().getSurface();
-                play("/storage/emulated/0/kugou/mv/光年之外-art--G.E.M.邓紫棋--art-14a694dd09e9f655f0485b4d06a1ac4f.mp4",
+//                play("/storage/emulated/0/kugou/mv/光年之外-art--G.E.M.邓紫棋--art-14a694dd09e9f655f0485b4d06a1ac4f.mp4",
+//                        surface);
+                ///storage/emulated/0/Download/黎明前的黑暗（完整版） - NCF-艾力.mp3
+                play("/storage/emulated/0/Download/黎明前的黑暗（完整版） - NCF-艾力.mp3",
                         surface);
             }
         }.start();
@@ -109,7 +112,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 .withRequestCode(chooseReqCode)
                 .withStartPath(path)
                 .withTitle("选择歌曲")
-                .withFileFilter(new String[]{".mp4",".avi","."});
+//                .withFileFilter(new String[]{".mp4",".avi","."})
+                ;
         filePicker.start();
     }
     List<String> listPath;
@@ -120,13 +124,19 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             }
             listPath = data.getStringArrayListExtra("paths");
             if (listPath.size()>0){
-                String path = listPath.get(0);
-                for (String s : listPath) {
-                    Log.d(TAG, "onActivityResult: "+s);
-                }
-                Surface surface = videoView.getHolder().getSurface();
-                play(path,surface);
-                Log.d(TAG, "onActivityResult: path = "+path);
+                videoView.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        String path = listPath.get(0);
+                        for (String s : listPath) {
+                            Log.d(TAG, "onActivityResult: "+s);
+                        }
+                        Surface surface = videoView.getHolder().getSurface();
+                        play(path,surface);
+                        Log.d(TAG, "onActivityResult: path = "+path);
+                    }
+                },1000);
+
             }
         }
         super.onActivityResult(requestCode, resultCode, data);
