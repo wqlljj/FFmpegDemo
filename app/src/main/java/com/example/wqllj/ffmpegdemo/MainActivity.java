@@ -3,6 +3,8 @@ package com.example.wqllj.ffmpegdemo;
 import android.Manifest;
 import android.content.Intent;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.HandlerThread;
 import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
@@ -39,9 +41,12 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         System.loadLibrary("yuv");
         System.loadLibrary("native-lib");
     }
-    private int chooseReqCode = 1000;
+    private int MEIDAREQCODE = 1000;
+    private int AUDIOREQCODE = 1001;
     private String TAG = "MainActivity";
     private VideoView videoView;
+    private HandlerThread handlerThread;
+    private Handler playHandler;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -49,10 +54,12 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         setContentView(R.layout.activity_main);
 
         // Example of a call to a native method
-        Button tv = (Button) findViewById(R.id.select);
-        tv.setText(stringFromJNI());
-        tv.setOnClickListener(this);
+        findViewById(R.id.media_select).setOnClickListener(this);
+        findViewById(R.id.audio_select).setOnClickListener(this);
         videoView = (VideoView)findViewById(R.id.video_view);
+        handlerThread = new HandlerThread("player");
+        handlerThread.start();
+        playHandler = new Handler(handlerThread.getLooper());
     }
 
     /**
@@ -64,20 +71,14 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     @Override
     public void onClick(View v) {
-        new Thread(){
-            @Override
-            public void run() {
-                super.run();
-                Surface surface = videoView.getHolder().getSurface();
-//                play("/storage/emulated/0/kugou/mv/光年之外-art--G.E.M.邓紫棋--art-14a694dd09e9f655f0485b4d06a1ac4f.mp4",
-//                        surface);
-                ///storage/emulated/0/Download/黎明前的黑暗（完整版） - NCF-艾力.mp3
-                play("/storage/emulated/0/Download/黎明前的黑暗（完整版） - NCF-艾力.mp3",
-                        surface);
-            }
-        }.start();
-
-//        chooseFile();
+        switch (v.getId()){
+            case R.id.audio_select:
+                chooseFile(AUDIOREQCODE);
+                break;
+            case R.id.media_select:
+                chooseFile(MEIDAREQCODE);
+                break;
+        }
     }
 
     @Override
@@ -100,10 +101,23 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     void onShowRational(final PermissionRequest request) {
         request.proceed();
     }
-    private void chooseFile(){
-        String path = Environment.getExternalStorageDirectory().getAbsolutePath()
-                + File.separator + "kugou"
-                + File.separator + "mv";
+    private void chooseFile(int chooseReqCode){
+        String path ="" ;
+        String[] filter = null;
+        String title = "";
+        if(chooseReqCode==MEIDAREQCODE) {
+                path=Environment.getExternalStorageDirectory().getAbsolutePath()
+                    + File.separator + "kugou"
+                    + File.separator + "mv";
+            filter = new String[]{".mp4",".avi","."};
+            title = "选择视频";
+        }else if(chooseReqCode == AUDIOREQCODE){
+            path = Environment.getExternalStorageDirectory().getAbsolutePath()
+                    + File.separator + "kgmusic"
+                    + File.separator + "download";
+            filter = new String[]{".mp3",".aac","."};
+            title = "选择音频";
+        }
         if(!new File(path).exists()){
             path = Environment.getExternalStorageDirectory().getAbsolutePath();
         }
@@ -111,32 +125,35 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 .withActivity(this)
                 .withRequestCode(chooseReqCode)
                 .withStartPath(path)
-                .withTitle("选择歌曲")
-//                .withFileFilter(new String[]{".mp4",".avi","."})
-                ;
+                .withTitle(title)
+                .withFileFilter(filter);
         filePicker.start();
     }
     List<String> listPath;
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == chooseReqCode){
+    protected void onActivityResult(final int requestCode, int resultCode, Intent data) {
+        if (requestCode == MEIDAREQCODE||requestCode == AUDIOREQCODE){
             if (data==null || !data.hasExtra("paths")){
                 return;
             }
             listPath = data.getStringArrayListExtra("paths");
             if (listPath.size()>0){
-                videoView.postDelayed(new Runnable() {
+                playHandler.postDelayed(new Runnable() {
                     @Override
                     public void run() {
                         String path = listPath.get(0);
                         for (String s : listPath) {
                             Log.d(TAG, "onActivityResult: "+s);
                         }
-                        Surface surface = videoView.getHolder().getSurface();
-                        play(path,surface);
+                        if(requestCode == MEIDAREQCODE) {
+//                            Surface surface = videoView.getHolder().getSurface();
+//                            play(path, surface);
+                            MediaPlayAPI.videoToAudio(path,0);
+                        }else if(requestCode == AUDIOREQCODE){
+                            MediaPlayAPI.convertAudio(path,1);
+                        }
                         Log.d(TAG, "onActivityResult: path = "+path);
                     }
                 },1000);
-
             }
         }
         super.onActivityResult(requestCode, resultCode, data);
