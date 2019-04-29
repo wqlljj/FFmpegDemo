@@ -137,23 +137,38 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             }
             listPath = data.getStringArrayListExtra("paths");
             if (listPath.size()>0){
-                playHandler.postDelayed(new Runnable() {
+                new Thread(){
                     @Override
                     public void run() {
-                        String path = listPath.get(0);
-                        for (String s : listPath) {
-                            Log.d(TAG, "onActivityResult: "+s);
-                        }
-                        if(requestCode == MEIDAREQCODE) {
-//                            Surface surface = videoView.getHolder().getSurface();
-//                            play(path, surface);
-                            MediaPlayAPI.videoToAudio(path,0);
-                        }else if(requestCode == AUDIOREQCODE){
-                            MediaPlayAPI.convertAudio(path,1);
-                        }
-                        Log.d(TAG, "onActivityResult: path = "+path);
+                        super.run();
+                        MediaPlayAPI.play(listPath.get(0));
                     }
-                },1000);
+                }.start();
+
+//                playHandler.postDelayed(new Runnable() {
+//                    @Override
+//                    public void run() {
+//                        final String path = listPath.get(0);
+//                        for (String s : listPath) {
+//                            Log.d(TAG, "onActivityResult: "+s);
+//                        }
+//                        if(requestCode == MEIDAREQCODE) {
+////                            Surface surface = videoView.getHolder().getSurface();
+////                            play(path, surface);
+//                            new Thread(){
+//                                @Override
+//                                public void run() {
+//                                    super.run();
+//                                    MediaPlayAPI.play(path);
+//                                }
+//                            }.start();
+//
+//                        }else if(requestCode == AUDIOREQCODE){
+//                            MediaPlayAPI.convertAudio(path,1);
+//                        }
+//                        Log.d(TAG, "onActivityResult: path = "+path);
+//                    }
+//                },1000);
             }
         }
         super.onActivityResult(requestCode, resultCode, data);
