@@ -1,13 +1,17 @@
 package com.example.wqllj.ffmpegdemo;
 
 import android.Manifest;
+import android.content.ComponentName;
 import android.content.Intent;
+import android.content.ServiceConnection;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.IBinder;
 import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.text.LoginFilter;
 import android.util.Log;
 import android.view.Surface;
 import android.view.View;
@@ -47,6 +51,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private VideoView videoView;
     private HandlerThread handlerThread;
     private Handler playHandler;
+    private Intent intent;
+    private ServiceConnection conn;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -60,12 +66,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         handlerThread = new HandlerThread("player");
         handlerThread.start();
         playHandler = new Handler(handlerThread.getLooper());
+//        startPlayService();
+    }
+    private void startPlayService() {
+         intent = new Intent(this,PlayService.class);
+        startService(intent);
     }
 
-    /**
-     * A native method that is implemented by the 'native-lib' native library,
-     * which is packaged with this application.
-     */
     public native String stringFromJNI();
     public native void play(String path, Surface surface);
 
@@ -137,40 +144,31 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             }
             listPath = data.getStringArrayListExtra("paths");
             if (listPath.size()>0){
-                new Thread(){
+                playHandler.postDelayed(new Runnable() {
                     @Override
                     public void run() {
-                        super.run();
-                        MediaPlayAPI.play(listPath.get(0));
+                        final String path = listPath.get(0);
+                        for (String s : listPath) {
+                            Log.d(TAG, "onActivityResult: "+s);
+                        }
+                        if(requestCode == MEIDAREQCODE) {
+//                            Surface surface = videoView.getHolder().getSurface();
+//                            play(path, surface);
+                            MediaPlayAPI.play(path);
+                        }else if(requestCode == AUDIOREQCODE){
+                            MediaPlayAPI.convertAudio(path,1);
+                        }
+                        Log.d(TAG, "onActivityResult: path = "+path);
                     }
-                }.start();
-
-//                playHandler.postDelayed(new Runnable() {
-//                    @Override
-//                    public void run() {
-//                        final String path = listPath.get(0);
-//                        for (String s : listPath) {
-//                            Log.d(TAG, "onActivityResult: "+s);
-//                        }
-//                        if(requestCode == MEIDAREQCODE) {
-////                            Surface surface = videoView.getHolder().getSurface();
-////                            play(path, surface);
-//                            new Thread(){
-//                                @Override
-//                                public void run() {
-//                                    super.run();
-//                                    MediaPlayAPI.play(path);
-//                                }
-//                            }.start();
-//
-//                        }else if(requestCode == AUDIOREQCODE){
-//                            MediaPlayAPI.convertAudio(path,1);
-//                        }
-//                        Log.d(TAG, "onActivityResult: path = "+path);
-//                    }
-//                },1000);
+                },1000);
             }
         }
         super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+//        stopService(intent);
     }
 }
