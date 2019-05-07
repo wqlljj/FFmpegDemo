@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context="com.example.mediaplayer.MainActivity">
+    <com.example.mediaplayer.VideoView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:id="@+id/video_view"
+        tools:layout_editor_absoluteY="8dp"
+        tools:layout_editor_absoluteX="8dp" />
+    <Button
+        android:id="@+id/media_select"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="视频帧解码"
+        />
+    <Button
+        android:id="@+id/audio_select"
+        android:layout_below="@id/media_select"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="音频转码(PCM)"
+        />
+</RelativeLayout>
