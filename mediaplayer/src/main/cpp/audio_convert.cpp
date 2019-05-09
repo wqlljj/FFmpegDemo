@@ -10,14 +10,69 @@
 #include <android/native_window_jni.h>
 #include <android/native_window.h>
 #include <libyuv.h>
+#include <sys/syscall.h>
+
+//异常捕获
+#include <signal.h>
+#include <setjmp.h>
+#include <asm/siginfo.h>
 
 #include "logutils.cpp"
 
 extern "C"{
+#include <pthread.h>
 #include <libavformat/avformat.h>
 #include <libswresample/swresample.h>
 
 }
+
+
+/*
+jni捕获异常的方法之二：捕捉系统崩溃信号，适用于代码量大的情况。
+*/
+// 定义代码跳转锚点
+sigjmp_buf JUMP_ANCHOR;
+volatile sig_atomic_t error_cnt = 0;
+
+
+void exception_handler(int errorCode){
+    error_cnt += 1;
+    LOGE("JNI_ERROR, error code %d, cnt %d", errorCode, error_cnt);
+    siglongjmp(JUMP_ANCHOR, 1);
+}
+int line;
+bool isError = false;
+void *process(void* arg) {
+    int tid = (int)syscall(SYS_gettid);
+
+    int pid = (int)syscall(SYS_getpid);
+    LOGI("process %d  %d",tid,pid);
+    line =__LINE__;
+    char* a = NULL;
+    int val1 = a[1] - '0';
+    line =__LINE__;
+    char* b = NULL;
+    int val2 = b[1] - '0';
+    line =__LINE__;
+    LOGE("val 1 %d", val1);
+    line =__LINE__;
+}
+void my_sigaction(int code, siginfo_t *info, void *reserved) {
+    isError = true;
+    LOGE("JNI_ERROR, error code %d\n",code)
+    LOGE("JNI_ERROR,info si_code = %d  si_errno = %d  si_signo = %d\n", info->si_code,info->si_errno,info->si_signo)
+    LOGE("_addr = %x\n",info->_sifields._sigfault._addr)
+    /* Ensure we do not deadlock. Default of ALRM is to die.
+       * (signal() and alarm() are signal-safe) */
+    signal(code, SIG_DFL);
+    signal(SIGALRM, SIG_DFL);
+
+    /* Ensure we do not deadlock. Default of ALRM is to die.
+	  * (signal() and alarm() are signal-safe) */
+    (void) alarm(8);
+    siglongjmp(JUMP_ANCHOR, 1);
+}
+
 
 char const *audioTyps[3] = {"mp3","pcm","aac"};
 //播放视频中的音频
@@ -25,7 +80,18 @@ char const *audioTyps[3] = {"mp3","pcm","aac"};
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_example_mediaplayer_MediaPlayAPI_play(JNIEnv *env, jclass cls, jstring path_) {
+    if(isError)return;
     const char *path = env->GetStringUTFChars(path_, 0);
+    line = __LINE__;
+    LOGI("MediaPlayAPI_play")
+    int id = (int)syscall(SYS_gettid);
+
+    int pid = (int)syscall(SYS_getpid);
+    LOGI("MediaPlayAPI_play %d  %d",id,pid);
+    pthread_t tid;
+    pthread_create(&tid, NULL, &process, (void *)0);
+    pthread_join(tid,NULL);
+    LOGI("pthread FINISH")
     size_t MAX_AUDIO_FRAME_SIZE = 44100;
     av_register_all();
     AVFormatContext * avFormatContext = avformat_alloc_context();
@@ -272,3 +338,48 @@ const char *path = env->GetStringUTFChars(path_, 0);
     avformat_close_input(&avFormatContext);
     env->ReleaseStringUTFChars(path_, path);
 }
+
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_example_mediaplayer_MainActivity_test(JNIEnv *env, jclass type) {
+//     代码跳转锚点
+    if (sigsetjmp(JUMP_ANCHOR, 1) != 0) {
+        LOGI("sigsetjmp");
+        std::string file(__FILE__);
+        LOGI("file = %s",file.c_str())
+        int index = file.find_last_of("\\",file.length())+1;
+        LOGI(" index = %d\n", index);
+        const char *filename = file.substr(index, file.length() - index).c_str();
+        LOGI("filename = %s\n",filename)
+        char result[100];
+        sprintf(result,"name : %s  \n line %d\n",filename,line+1);
+        LOGI("ERROR = %s\n", result);
+        return env->NewStringUTF(result);
+    }
+    line =__LINE__;
+    // 注册要捕捉的系统信号量
+    struct sigaction sigact;
+    struct sigaction old_action;
+    sigaction(SIGABRT, NULL, &old_action);
+    if (old_action.sa_handler != SIG_IGN) {
+        sigset_t block_mask;
+        sigemptyset(&block_mask);
+        sigaddset(&block_mask, SIGABRT); // handler处理捕捉到的信号量时，需要阻塞的信号
+        sigaddset(&block_mask, SIGSEGV); // handler处理捕捉到的信号量时，需要阻塞的信号
+
+        sigemptyset(&sigact.sa_mask);
+//        sigact.sa_flags = 0;
+        sigact.sa_flags = SA_SIGINFO;
+        sigact.sa_mask = block_mask;
+//        sigact.sa_handler = exception_handler;
+        sigact.sa_sigaction = my_sigaction;
+        sigaction(SIGABRT, &sigact, NULL); // 注册要捕捉的信号
+        sigaction(SIGSEGV, &sigact, NULL); // 注册要捕捉的信号
+    }
+    line =__LINE__;
+//    process();
+    line =__LINE__;
+    return env->NewStringUTF("aaa");
+}
+

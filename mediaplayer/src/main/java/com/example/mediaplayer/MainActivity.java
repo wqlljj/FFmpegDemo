@@ -41,6 +41,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
     private int MEIDAREQCODE = 1000;
     private int AUDIOREQCODE = 1001;
+
+    private static final int ACTION_PLAY_VIDEO=100;
+    private static final int ACTION_PLAY_AUDIO=101;
+    private static final int ACTION_CONVERT_AUDIO_PCM=102;
+    private int action;
     private String TAG = "MainActivity";
     private VideoView videoView;
     private HandlerThread handlerThread;
@@ -52,10 +57,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
-        // Example of a call to a native method
-        findViewById(R.id.media_select).setOnClickListener(this);
-        findViewById(R.id.audio_select).setOnClickListener(this);
+        findViewById(R.id.play_video).setOnClickListener(this);
+        findViewById(R.id.play_audio).setOnClickListener(this);
+        findViewById(R.id.convert_audio_pcm).setOnClickListener(this);
         videoView = (VideoView)findViewById(R.id.video_view);
         handlerThread = new HandlerThread("player");
         handlerThread.start();
@@ -66,39 +70,44 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         intent = new Intent(this,PlayService.class);
         startService(intent);
     }
-    public native void play(String path, Surface surface);
-
     @Override
     public void onClick(View v) {
         switch (v.getId()){
-            case R.id.audio_select:
+            case R.id.convert_audio_pcm:
+                action = ACTION_CONVERT_AUDIO_PCM;
                 chooseFile(AUDIOREQCODE);
                 break;
-            case R.id.media_select:
+            case R.id.play_audio:
+                action = ACTION_PLAY_AUDIO;
+                chooseFile(MEIDAREQCODE);
+                break;
+            case R.id.play_video:
+                action = ACTION_PLAY_VIDEO;
                 chooseFile(MEIDAREQCODE);
                 break;
         }
     }
-
+    private void handleAction(int action){
+        String path = listPath.get(0);
+        Log.i(TAG, "handleAction: "+path);
+        switch (action) {
+            case ACTION_PLAY_AUDIO:
+                Log.e(TAG, "handleAction: "+test() );
+                MediaPlayAPI.play(path);
+                break;
+            case ACTION_PLAY_VIDEO:
+                Surface surface = videoView.getHolder().getSurface();
+                play(path, surface);
+                break;
+            case ACTION_CONVERT_AUDIO_PCM:
+                MediaPlayAPI.convertAudio(path,1);
+                break;
+        }
+    }
     @Override
     protected void onResume() {
         super.onResume();
         MainActivityPermissionsDispatcher.needWithPermissionCheck(this);
-    }
-
-    @NeedsPermission({Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.WAKE_LOCK})
-    void need() {
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        MainActivityPermissionsDispatcher.onRequestPermissionsResult(this, requestCode, grantResults);
-    }
-
-    @OnShowRationale({Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.WAKE_LOCK})
-    void onShowRational(final PermissionRequest request) {
-        request.proceed();
     }
     private void chooseFile(int chooseReqCode){
         String path ="" ;
@@ -139,25 +148,29 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 playHandler.postDelayed(new Runnable() {
                     @Override
                     public void run() {
-                        final String path = listPath.get(0);
-                        for (String s : listPath) {
-                            Log.d(TAG, "onActivityResult: "+s);
-                        }
-                        if(requestCode == MEIDAREQCODE) {
-//                            Surface surface = videoView.getHolder().getSurface();
-//                            play(path, surface);
-                            MediaPlayAPI.play(path);
-                        }else if(requestCode == AUDIOREQCODE){
-                            MediaPlayAPI.convertAudio(path,1);
-                        }
-                        Log.d(TAG, "onActivityResult: path = "+path);
+                        handleAction(action);
                     }
                 },1000);
             }
         }
         super.onActivityResult(requestCode, resultCode, data);
     }
+    public native void play(String path, Surface surface);
+    public static native String test();
+    @NeedsPermission({Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.WAKE_LOCK})
+    void need() {
+    }
 
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        MainActivityPermissionsDispatcher.onRequestPermissionsResult(this, requestCode, grantResults);
+    }
+
+    @OnShowRationale({Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.WAKE_LOCK})
+    void onShowRational(final PermissionRequest request) {
+        request.proceed();
+    }
     @Override
     protected void onDestroy() {
         super.onDestroy();

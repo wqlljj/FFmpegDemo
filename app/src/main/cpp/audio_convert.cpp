@@ -11,6 +11,7 @@
 #include <android/native_window.h>
 #include <libyuv.h>
 
+
 #include "logutils.cpp"
 
 extern "C"{

@@ -27,59 +27,6 @@ bool check(JNIEnv *env) {
     return false;
 }
 
-static const int kTileX = 8;
-static const int kTileY = 8;
-
-void scaleI420(jbyte *src_i420_data, jint width, jint height, jbyte *dst_i420_data, jint dst_width,
-               jint dst_height, jint mode) {
-
-    jint src_i420_y_size = width * height;
-    jint src_i420_u_size = (width >> 1) * (height >> 1);
-    jbyte *src_i420_y_data = src_i420_data;
-    jbyte *src_i420_u_data = src_i420_data + src_i420_y_size;
-    jbyte *src_i420_v_data = src_i420_data + src_i420_y_size + src_i420_u_size;
-
-    jint dst_i420_y_size = dst_width * dst_height;
-    jint dst_i420_u_size = (dst_width >> 1) * (dst_height >> 1);
-    jbyte *dst_i420_y_data = dst_i420_data;
-    jbyte *dst_i420_u_data = dst_i420_data + dst_i420_y_size;
-    jbyte *dst_i420_v_data = dst_i420_data + dst_i420_y_size + dst_i420_u_size;
-
-    libyuv::I420Scale((const uint8 *) src_i420_y_data, width,
-                      (const uint8 *) src_i420_u_data, width >> 1,
-                      (const uint8 *) src_i420_v_data, width >> 1,
-                      width, height,
-                      (uint8 *) dst_i420_y_data, dst_width,
-                      (uint8 *) dst_i420_u_data, dst_width >> 1,
-                      (uint8 *) dst_i420_v_data, dst_width >> 1,
-                      dst_width, dst_height,
-                      (libyuv::FilterMode) mode);
-}
-
-void rotateI420(jbyte *src_i420_data, jint width, jint height, jbyte *dst_i420_data, jint degree) {
-    jint src_i420_y_size = width * height;
-    jint src_i420_u_size = (width >> 1) * (height >> 1);
-
-    jbyte *src_i420_y_data = src_i420_data;
-    jbyte *src_i420_u_data = src_i420_data + src_i420_y_size;
-    jbyte *src_i420_v_data = src_i420_data + src_i420_y_size + src_i420_u_size;
-
-    jbyte *dst_i420_y_data = dst_i420_data;
-    jbyte *dst_i420_u_data = dst_i420_data + src_i420_y_size;
-    jbyte *dst_i420_v_data = dst_i420_data + src_i420_y_size + src_i420_u_size;
-
-    if (degree == libyuv::kRotate90 || degree == libyuv::kRotate270) {
-        libyuv::I420Rotate((const uint8 *) src_i420_y_data, width,
-                           (const uint8 *) src_i420_u_data, width >> 1,
-                           (const uint8 *) src_i420_v_data, width >> 1,
-                           (uint8 *) dst_i420_y_data, height,
-                           (uint8 *) dst_i420_u_data, height >> 1,
-                           (uint8 *) dst_i420_v_data, height >> 1,
-                           width, height,
-                           (libyuv::RotationMode) degree);
-    }
-}
-
 
 extern "C"
 JNIEXPORT void JNICALL Java_com_example_mediaplayer_MainActivity_play

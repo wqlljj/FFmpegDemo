@@ -12,14 +12,21 @@
         tools:layout_editor_absoluteY="8dp"
         tools:layout_editor_absoluteX="8dp" />
     <Button
-        android:id="@+id/media_select"
+        android:id="@+id/play_video"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="视频帧解码"
         />
     <Button
-        android:id="@+id/audio_select"
-        android:layout_below="@id/media_select"
+        android:id="@+id/play_audio"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="播放音频"
+        android:layout_below="@id/play_video"
+        />
+    <Button
+        android:id="@+id/convert_audio_pcm"
+        android:layout_below="@id/play_audio"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="音频转码(PCM)"
