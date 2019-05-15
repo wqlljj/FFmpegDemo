@@ -355,6 +355,7 @@ Java_com_example_mediaplayer_MainActivity_test(JNIEnv *env, jclass type) {
         char result[100];
         sprintf(result,"name : %s  \n line %d\n",filename,line+1);
         LOGI("ERROR = %s\n", result);
+
         return env->NewStringUTF(result);
     }
     line =__LINE__;

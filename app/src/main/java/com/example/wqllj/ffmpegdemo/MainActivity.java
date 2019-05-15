@@ -152,9 +152,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                             Log.d(TAG, "onActivityResult: "+s);
                         }
                         if(requestCode == MEIDAREQCODE) {
-//                            Surface surface = videoView.getHolder().getSurface();
-//                            play(path, surface);
-                            MediaPlayAPI.play(path);
+                            Surface surface = videoView.getHolder().getSurface();
+                            play(path, surface);
+//                            MediaPlayAPI.play(path);
                         }else if(requestCode == AUDIOREQCODE){
                             MediaPlayAPI.convertAudio(path,1);
                         }

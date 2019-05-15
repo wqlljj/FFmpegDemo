@@ -6,16 +6,56 @@
 #include <android/log.h>
 #include <android/native_window_jni.h>
 #include <android/native_window.h>
-#include <libyuv.h>
+#include <pthread.h>
+#include <sys/syscall.h>
 
 extern "C" {
+#include <libyuv.h>
 #include "libavformat/avformat.h"
 #include "libswscale/swscale.h"
+#include "libavcodec/avcodec.h"
 #include <libswresample/swresample.h>
 }
 
 #define LOGI(FORMAT, ...) __android_log_print(ANDROID_LOG_INFO,"jason",FORMAT,##__VA_ARGS__);
 #define LOGE(FORMAT, ...) __android_log_print(ANDROID_LOG_ERROR,"jason",FORMAT,##__VA_ARGS__);
+#define MAX_STREAM 2
+#define MAX_AUDIO_FRAME_SIZE 48000*4
+struct Player{
+    JavaVM *javaVM;
+    AVFormatContext *input_format_ctx;
+    int video_index;
+    int audio_index;
+    AVCodecContext *input_codec_ctx[MAX_STREAM];
+
+    pthread_t decode_threads[MAX_STREAM];
+    ANativeWindow* nativeWindow;
+
+    SwrContext* swr_ctx;
+    AVSampleFormat in_sample_fmt;
+    AVSampleFormat out_sample_fmt;
+    int in_sample_rate;
+    int out_sample_rate;
+    int out_channal_nb;
+
+    jobject audio_track;
+    jmethodID audio_track_write_mid;
+};
+
+void init_input_format_ctx(Player *pPlayer, const char *cstr);
+
+void init_codec_context(Player *pPlayer,int index);
+
+void decode_video_pre(JNIEnv *pEnv, Player *pPlayer, jobject pJobject);
+void *decode_data(void* arg);
+
+void decode_video(Player *pPlayer, AVPacket *pPacket);
+
+void decode_audio_pre(Player *pPlayer);
+
+void jni_audiotrack_init(JNIEnv *pEnv,  Player *pPlayer);
+
+void decode_audio(Player *pPlayer, AVPacket *pPacket);
 
 bool check(JNIEnv *env) {
     if (env->ExceptionCheck()) {
@@ -33,167 +73,174 @@ JNIEXPORT void JNICALL Java_com_example_mediaplayer_MainActivity_play
         (JNIEnv *env, jobject jobj, jstring input_jstr, jobject surface) {
     const char *input_cstr = env->GetStringUTFChars(input_jstr, NULL);
     LOGI("PLAY %s", input_cstr);
-    //1.注册组件
-    av_register_all();
+    struct Player* player = (struct Player*)malloc(sizeof(struct Player));
+    env->GetJavaVM(&(player->javaVM));
+    init_input_format_ctx(player,input_cstr);
+    init_codec_context(player,player->video_index);
+    init_codec_context(player,player->audio_index);
 
-    //封装格式上下文
-    AVFormatContext *pFormatCtx = avformat_alloc_context();
-    //2.打开输入视频文件
-    if (avformat_open_input(&pFormatCtx, input_cstr, NULL, NULL) != 0) {
-        LOGE("%s", "打开输入视频文件失败");
-        return;
-    }
-    //3.获取视频信息
-    if (avformat_find_stream_info(pFormatCtx, NULL) < 0) {
-        LOGE("%s", "获取视频信息失败");
-        return;
-    }
-    LOGI("视频格式 %s", pFormatCtx->iformat->name)
-    LOGI("视频时长 %d", (int) (pFormatCtx->duration / AV_TIME_BASE))
+    decode_video_pre(env,player,surface);
+    decode_audio_pre(player);
 
-    //视频解码，需要找到视频对应的AVStream所在pFormatCtx->streams的索引位置
-    int video_stream_idx = -1;
-    int i = 0;
-    for (; i < pFormatCtx->nb_streams; i++) {
-        //根据类型判断，是否是视频流
-        if (pFormatCtx->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO) {
-            video_stream_idx = i;
-        }
-    }
-    LOGI("video_stream_idx =  %d ", video_stream_idx)
-    AVCodecContext *pCodeCtx;
-    AVCodec *pCodec;
-    if(video_stream_idx != -1) {
-        //4.获取视频解码器
-         pCodeCtx = pFormatCtx->streams[video_stream_idx]->codec;
-         pCodec = avcodec_find_decoder(pCodeCtx->codec_id);
-        if (pCodec == NULL) {
-            LOGE("%s", "视频无法解码");
-        return;
-        } else {
-            LOGI("视频宽高  %d  %d", pCodeCtx->width, pCodeCtx->height)
-            LOGI("视频帧  %d", pCodeCtx->bit_rate)
-            LOGI("解码器名称 %s", pCodec->name)
-        }
-    }else{
-        LOGE("%s", "无视频流");
-        return;
-    }
-    //5.打开解码器
-    if (pCodec==NULL||avcodec_open2(pCodeCtx, pCodec, NULL) < 0) {
-        LOGE("%s", "视频解码器无法打开");
-//        return;
-    }
+    jni_audiotrack_init(env,player);
 
-    //编码数据
-    AVPacket *packet = (AVPacket *) av_malloc(sizeof(AVPacket));
-    //像素数据（解码数据）
-    AVFrame *yuv_frame = av_frame_alloc();
-    AVFrame *rgb_frame = av_frame_alloc();
-    //native绘制
-    //窗体
-    ANativeWindow *nativeWindow = ANativeWindow_fromSurface(env, surface);
-    check(env);
-    //绘制时的缓冲区
-    ANativeWindow_Buffer outBuffer;
-    int width = 400;
-    int height =0;
-    struct SwsContext *sws_ctx;
-    if(pCodeCtx !=NULL) {
-        height = (int) 400 * (1.0 * pCodeCtx->height / pCodeCtx->width);
-        //用于像素格式转换或者缩放
-        sws_ctx = sws_getContext(
-                pCodeCtx->width, pCodeCtx->height, pCodeCtx->pix_fmt,
-                width, height, AV_PIX_FMT_RGBA,
-                SWS_BILINEAR, NULL, NULL, NULL);
-    }
-    int ret, got_frame, framecount = 0;
-    //6.一阵一阵读取压缩的视频数据AVPacket
-    if (nativeWindow != NULL) {
-        while (av_read_frame(pFormatCtx, packet) >= 0) {
-            if (packet->stream_index == video_stream_idx) {
-                //解码AVPacket->AVFrame
-                ret = avcodec_decode_video2(pCodeCtx, yuv_frame, &got_frame, packet);
-                //Zero if no frame could be decompressed
-                //非零，正在解码
-                if (got_frame) {
-                    LOGI("解码%d帧", framecount++);
-//                LOGI("宽 %d 高 %d", nativeWindow, +pCodeCtx->height);
-                    //lock
-                    //设置缓冲区的属性（宽、高、像素格式）
-                    ANativeWindow_setBuffersGeometry(nativeWindow, width, height,
-                                                     WINDOW_FORMAT_RGBA_8888);
-                    ANativeWindow_lock(nativeWindow, &outBuffer, NULL);
-                    //设置rgb_frame的属性（像素格式、宽高）和缓冲区
-                    //rgb_frame缓冲区与outBuffer.bits是同一块内存
-                    avpicture_fill((AVPicture *) rgb_frame, (const uint8_t *) outBuffer.bits,
-                                   PIX_FMT_RGBA,
-                                   width, height);
-                    LOGI("outBuffer.stride = %d  %d   %d", outBuffer.stride, outBuffer.width,
-                         outBuffer.height);
-//                if (!yuv_scale_frame->linesize[0]) {
-//                    //只有指定了AVFrame的像素格式、画面大小才能真正分配内存
-//                    //缓冲区分配内存
-//
-//                    uint8_t *out_buffer = (uint8_t *) av_malloc(
-//                            avpicture_get_size(AV_PIX_FMT_RGBA, width, height));
-//                    //初始化缓冲区
-//                    avpicture_fill((AVPicture *) yuv_scale_frame, out_buffer, AV_PIX_FMT_RGBA,
-//                                   width, height);
-//
-//                }
-                    rgb_frame->linesize[0] = outBuffer.stride * 2;
-                    LOGI("rgb_frame宽高1 %d %d %d  %d", yuv_frame->height, rgb_frame->width,
-                         rgb_frame->height, rgb_frame->linesize[0])
-                    int h = sws_scale(sws_ctx,
-                                      (const uint8_t *const *) yuv_frame->data, yuv_frame->linesize,
-                                      0, yuv_frame->height,
-                                      rgb_frame->data, rgb_frame->linesize);
-
-                    LOGI("rgb_frame宽高2 %d   %d  %d %d  %d", yuv_frame->height, h, rgb_frame->width,
-                         rgb_frame->height, rgb_frame->linesize[0])
-
-
-//                int h=libyuv::I420ToARGB(yuv_frame->data[0], yuv_frame->linesize[0],
-//                                   yuv_frame->data[2], yuv_frame->linesize[2],
-//                                   yuv_frame->data[1], yuv_frame->linesize[1],
-//                                   rgb_frame->data[0], rgb_frame->linesize[0],
-//                                   pCodeCtx->width, pCodeCtx->height);
-//                                LOGI("rgb_frame宽高2 %d   %d  %d %d ", yuv_frame->height, h,
-//                                     rgb_frame->width, rgb_frame->height)
-
-                    if (check(env)) {
-                        break;
-                    }
-
-                    //unlock
-                    ANativeWindow_unlockAndPost(nativeWindow);
-                    if (check(env)) {
-                        break;
-                    }
-                    usleep(1000 * 16);
-
-                }
-            }
-
-            av_free_packet(packet);
-        }
-    } else {
-        LOGI("nativeWindow == NULL");
-    };
-    if (nativeWindow) {
-        ANativeWindow_release(nativeWindow);
-    }
-    sws_freeContext(sws_ctx);
-    check(env);
-    av_frame_free(&yuv_frame);
-    check(env);
-    avcodec_close(pCodeCtx);
-    check(env);
-    avformat_free_context(pFormatCtx);
-    check(env);
-    env->ReleaseStringUTFChars(input_jstr, input_cstr);
+    pthread_create(&(player->decode_threads[player->video_index]),NULL,decode_data,(void*)player);
+    pthread_create(&(player->decode_threads[player->audio_index]),NULL,decode_data,(void*)player);
 }
+
+void jni_audiotrack_init(JNIEnv *env, Player *player) {
+    jclass media_player_api_class = env->FindClass("com/example/mediaplayer/MediaPlayAPI");
+    jmethodID createAudioTrack = env->GetStaticMethodID(media_player_api_class,"createAudioTrack","(II)Landroid/media/AudioTrack;");
+    jobject audio_track = env->CallStaticObjectMethod(media_player_api_class,createAudioTrack,player->out_sample_rate
+            ,player->out_channal_nb);
+
+    jclass  audio_track_cls = env->GetObjectClass(audio_track);
+    jmethodID play_mid = env->GetMethodID(audio_track_cls,"play","()V");
+    env->CallVoidMethod(audio_track,play_mid);
+
+    jmethodID write_mid = env->GetMethodID(audio_track_cls,"write","([BII)I");
+
+    player->audio_track = env->NewGlobalRef(audio_track);
+    player->audio_track_write_mid = write_mid;
+}
+
+void decode_audio_pre(Player *player) {
+    AVCodecContext* codecContext = player->input_codec_ctx[player->audio_index];
+    player->out_sample_fmt = AV_SAMPLE_FMT_S16;
+    player->in_sample_fmt = codecContext->sample_fmt;
+    player->in_sample_rate = player->out_sample_rate = codecContext->sample_rate;
+    uint64_t in_ch_layout = codecContext->channel_layout;
+    uint64_t  out_ch_layout = AV_CH_LAYOUT_STEREO;
+    player->swr_ctx = swr_alloc();
+    swr_alloc_set_opts(player->swr_ctx,out_ch_layout,player->out_sample_fmt,player->out_sample_rate,
+    in_ch_layout,player->in_sample_fmt,player->in_sample_rate,0,NULL);
+    swr_init(player->swr_ctx);
+    player->out_channal_nb = av_get_channel_layout_nb_channels(out_ch_layout);
+
+
+}
+
+void *decode_data(void* arg){
+    Player* player = (Player*)arg;
+    pthread_t tid = pthread_self();
+    int index= -1;
+    if(tid==player->decode_threads[player->video_index]){
+        index=player->video_index;
+    }else{
+        index = player->audio_index;
+    }
+    AVFormatContext* format_ctx = player->input_format_ctx;
+    AVPacket* packet = (AVPacket*)av_malloc(sizeof(AVPacket));
+    int video_frame_count = 0;
+    while( av_read_frame(format_ctx,packet)>=0){
+        if(packet->stream_index == index&&packet->stream_index == player->video_index){
+            decode_video(player,packet);
+            LOGI("video_frame_count:%d",video_frame_count++)
+        }else if(packet->stream_index == index&&packet->stream_index ==player->audio_index){
+            decode_audio(player,packet);
+            LOGI("audio_frame_count:%d",video_frame_count++)
+        }else{
+            LOGI("CANCEL %d",index)
+        }
+        av_free_packet(packet);
+    }
+}
+
+void decode_audio(Player *player, AVPacket *packet) {
+    AVCodecContext* codecContext = player->input_codec_ctx[player->audio_index];
+    AVFrame* frame = av_frame_alloc();
+    int got_frame;
+    avcodec_decode_audio4(codecContext,frame,&got_frame,packet);
+    uint8_t *out_buffer = (uint8_t*)av_malloc(MAX_AUDIO_FRAME_SIZE);
+    if(got_frame>0){
+        swr_convert(player->swr_ctx, &out_buffer,MAX_AUDIO_FRAME_SIZE,
+                    (const uint8_t **) frame->data, frame->nb_samples);
+        int out_buffer_size = av_samples_get_buffer_size(NULL,player->out_channal_nb,frame->nb_samples,player->out_sample_fmt,1);
+        JavaVM* javaVM = player->javaVM;
+        JNIEnv* env;
+        javaVM->AttachCurrentThread(&env,NULL);
+        jbyteArray audio_sample_array = env->NewByteArray(out_buffer_size);
+        jbyte *sample_bytes = env->GetByteArrayElements(audio_sample_array,NULL);
+        memcpy(sample_bytes,out_buffer,out_buffer_size);
+        env->ReleaseByteArrayElements(audio_sample_array,sample_bytes,0);
+        env->CallIntMethod(player->audio_track, player->audio_track_write_mid,
+                           audio_sample_array, 0, out_buffer_size);
+        env->DeleteLocalRef(audio_sample_array);
+
+        javaVM->DetachCurrentThread();
+        usleep(16000);
+    }
+    av_frame_free(&frame);
+}
+
+void decode_video(Player *player, AVPacket *packet) {
+    AVFrame* yuv_frame = av_frame_alloc();
+    AVFrame* rgb_frame = av_frame_alloc();
+    ANativeWindow_Buffer out_buffer;
+    AVCodecContext *codec_ctx = player->input_codec_ctx[player->video_index];
+    int gotFrame;
+    avcodec_decode_video2(codec_ctx,yuv_frame,&gotFrame,packet);
+    if(gotFrame){
+        ANativeWindow_setBuffersGeometry(player->nativeWindow,
+        codec_ctx->width,codec_ctx->height,WINDOW_FORMAT_RGBA_8888);
+        ANativeWindow_lock(player->nativeWindow,&out_buffer,NULL);
+        avpicture_fill((AVPicture*)rgb_frame,
+                       (const uint8_t *) out_buffer.bits, AV_PIX_FMT_RGBA, codec_ctx->width, codec_ctx->height);
+        libyuv::I420ToARGB(yuv_frame->data[0], yuv_frame->linesize[0],
+                                   yuv_frame->data[2], yuv_frame->linesize[2],
+                                   yuv_frame->data[1], yuv_frame->linesize[1],
+                                   rgb_frame->data[0], rgb_frame->linesize[0],
+                                   codec_ctx->width, codec_ctx->height);
+        LOGI("%d   %d %d",codec_ctx->width, codec_ctx->height,rgb_frame->linesize[0])
+        ANativeWindow_unlockAndPost(player->nativeWindow);
+        usleep(16000);
+    }
+    av_frame_free(&yuv_frame);
+    av_frame_free(&rgb_frame);
+}
+
+void decode_video_pre(JNIEnv *pEnv, Player *player, jobject pJobject) {
+    player->nativeWindow = ANativeWindow_fromSurface(pEnv,pJobject);
+}
+
+void init_codec_context(Player *player,int index) {
+    AVFormatContext* formatContext = player->input_format_ctx;
+    AVCodecContext* codecContext = formatContext->streams[index]->codec;
+    if(index==player->video_index) {
+        LOGE("视频宽高 %d  %d", codecContext->width, codecContext->height)
+    }
+    AVCodec* codec = avcodec_find_decoder(codecContext->codec_id);
+
+    if(codec == NULL||avcodec_open2(codecContext, codec, NULL) < 0){
+        LOGE("解码器打开失败")
+        return;
+    }
+    player->input_codec_ctx[index] = codecContext;
+}
+
+void init_input_format_ctx(Player *player, const char *path) {
+    av_register_all();
+    AVFormatContext* format_ctx = avformat_alloc_context();
+    if(avformat_open_input(&format_ctx,path,NULL,NULL)!=0){
+        LOGE("打开视频文件失败")
+        return;
+    }
+    if(avformat_find_stream_info(format_ctx,NULL)<0){
+        LOGE("获取视频信息失败")
+        return;
+    }
+    int i;
+    for(i=0;i<format_ctx->nb_streams;i++){
+        if(format_ctx->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO){
+            player->video_index = i;
+        }
+        if(format_ctx->streams[i]->codec->codec_type == AVMEDIA_TYPE_AUDIO){
+            player->audio_index = i;
+        }
+    }
+    player->input_format_ctx = format_ctx;
+}
+
 extern "C"
 JNIEXPORT jstring JNICALL
 Java_com_example_wqllj_ffmpegdemo_MainActivity_stringFromJNI(

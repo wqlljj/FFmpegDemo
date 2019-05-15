@@ -38,7 +38,7 @@ public class MediaPlayAPI {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             audioTrack.setVolume(0.1f);
         }else{
-            audioTrack.setStereoVolume(0.5f,0.5f);
+            audioTrack.setStereoVolume(0.1f,0.1f);
         }
         return audioTrack;
     }
