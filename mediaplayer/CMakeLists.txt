@@ -7,7 +7,8 @@ add_library( # Sets the name of the library.
              SHARED
              # Provides a relative path to your source file(s).
              src/main/cpp/native-lib.cpp
-              src/main/cpp/audio_convert.cpp)
+              src/main/cpp/audio_convert.cpp
+              src/main/cpp/queue.cpp)
 
 find_library( # Sets the name of the path variable.
               log-lib
