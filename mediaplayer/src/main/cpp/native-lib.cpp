@@ -18,9 +18,6 @@ extern "C" {
 #include "libavutil/time.h"
 #include <libswresample/swresample.h>
 }
-
-#define LOGI(FORMAT, ...) __android_log_print(ANDROID_LOG_INFO,"jason",FORMAT,##__VA_ARGS__);
-#define LOGE(FORMAT, ...) __android_log_print(ANDROID_LOG_ERROR,"jason",FORMAT,##__VA_ARGS__);
 #define MAX_STREAM 2
 #define PACKET_QUEUE_SIZE 50
 #define MAX_AUDIO_FRAME_SIZE 48000*4
@@ -34,9 +31,20 @@ struct Player{
     int audio_index;
     //流的总个数
     int streams_num ;
-    AVCodecContext *input_codec_ctx[MAX_STREAM];
+//    int frame_nb[MAX_STREAM];
+//    int current_frame_nb[MAX_STREAM];
+//    AVCodecContext *input_codec_ctx[MAX_STREAM];
+//    pthread_t decode_threads[MAX_STREAM];
+//    Queue *packets[MAX_STREAM];
+    //每个流已读或总帧数
+    int *frame_nb;
+    //每个流已解码帧数
+    int *current_frame_nb;
+    AVCodecContext **input_codec_ctx;
+    pthread_t *decode_threads;
+    Queue **packets;
 
-    pthread_t decode_threads[MAX_STREAM];
+    bool isReadFinish = false;
     ANativeWindow* nativeWindow;
 
     SwrContext* swr_ctx;
@@ -50,7 +58,6 @@ struct Player{
     jmethodID audio_track_write_mid;
 
     pthread_t thread_read_from_stream;
-    Queue *packets[MAX_STREAM];
 
     //互斥锁
     pthread_mutex_t mutex;
@@ -70,7 +77,7 @@ void* player_read_from_stream(void* data);
 
 void* player_fill_packet();
 
-void init_input_format_ctx(Player *pPlayer, const char *cstr);
+void init_input_format_ctx(Player *player, const char *path);
 
 void init_codec_context(Player *pPlayer,int index);
 
@@ -100,7 +107,6 @@ bool check(JNIEnv *env) {
     return false;
 }
 
-
 extern "C"
 JNIEXPORT void JNICALL Java_com_example_mediaplayer_MainActivity_play
         (JNIEnv *env, jobject jobj, jstring input_jstr, jobject surface) {
@@ -108,7 +114,17 @@ JNIEXPORT void JNICALL Java_com_example_mediaplayer_MainActivity_play
     LOGI("PLAY %s", input_cstr);
     struct Player* player = (struct Player*)malloc(sizeof(struct Player));
     env->GetJavaVM(&(player->javaVM));
-    init_input_format_ctx(player,input_cstr);
+    init_input_format_ctx(player, input_cstr);
+    int frame_nb[player->streams_num];
+    int current_frame_nb[player->streams_num];
+    AVCodecContext *input_codec_ctx[player->streams_num];
+    pthread_t decode_threads[player->streams_num];
+    Queue *packets[player->streams_num];
+    player->frame_nb = frame_nb;
+    player->current_frame_nb = current_frame_nb;
+    player->input_codec_ctx = input_codec_ctx;
+    player->decode_threads = decode_threads;
+    player->packets = packets;
     init_codec_context(player,player->video_index);
     init_codec_context(player,player->audio_index);
 
@@ -120,27 +136,31 @@ JNIEXPORT void JNICALL Java_com_example_mediaplayer_MainActivity_play
 
     pthread_mutex_init(&player->mutex,NULL);
     pthread_cond_init(&player->cond,NULL);
-
+    player->isReadFinish = false;
+    AVFormatContext *format_ctx = player->input_format_ctx;
+    for(int i=0;i<player->streams_num;i++){
+        player->frame_nb[i] = format_ctx->streams[i]->nb_frames;
+        player->current_frame_nb[i] = 0;
+    }
     //生产者线程
     pthread_create(&(player->thread_read_from_stream),NULL,player_read_from_stream,(void*)player);
-    sleep(1);
+    usleep(500000);
 
     player->start_time = 0;
-
+    //todo 解码所有流
     //消费者线程
     DecoderData data1 = {player,player->video_index}, *decoder_data1 = &data1;
+    LOGI("pthread_create decode_data %d  %#x",player->video_index,player->decode_threads[player->video_index])
     pthread_create(&(player->decode_threads[player->video_index]),NULL,decode_data,(void*)decoder_data1);
 
     DecoderData data2 = {player,player->audio_index}, *decoder_data2 = &data2;
+    LOGI("pthread_create decode_data %d  %#x",player->audio_index,player->decode_threads[player->audio_index])
     pthread_create(&(player->decode_threads[player->audio_index]),NULL,decode_data,(void*)decoder_data2);
 
 
     pthread_join(player->thread_read_from_stream,NULL);
     pthread_join(player->decode_threads[player->video_index],NULL);
     pthread_join(player->decode_threads[player->audio_index],NULL);
-
-//    pthread_create(&(player->decode_threads[player->video_index]),NULL,decode_data,(void*)player);
-//    pthread_create(&(player->decode_threads[player->audio_index]),NULL,decode_data,(void*)player);
 }
 
 /**
@@ -148,7 +168,6 @@ JNIEXPORT void JNICALL Java_com_example_mediaplayer_MainActivity_play
  */
 void* player_read_from_stream(void* data){
     Player* player = (Player *) data;
-    int index = 0;
     int ret;
     //栈内存上保存一个AVPacket
     AVPacket packet, *pkt = &packet;
@@ -156,21 +175,31 @@ void* player_read_from_stream(void* data){
         ret = av_read_frame(player->input_format_ctx,pkt);
         //到文件结尾了
         if(ret < 0){
-            break;
+            LOGI("read frame finish")
+            player->isReadFinish = true;
+            goto end;
         }
         //根据AVpacket->stream_index获取对应的队列
         Queue *queue = player->packets[pkt->stream_index];
-
+        player->frame_nb[pkt->stream_index]+=1;
+        if(pkt->stream_index == player->video_index){
+            LOGI("read video_frame_count:%d", player->frame_nb[pkt->stream_index])
+        }else{
+            LOGI("read audio_frame_count:%d", player->frame_nb[pkt->stream_index])
+        }
         //示范队列内存释放
-        //queue_free(queue,packet_free_func);
+//        queue_free(queue,packet_free_func);
         pthread_mutex_lock(&player->mutex);
         //将AVPacket压入队列
         AVPacket *packet_data = (AVPacket *) queue_push(queue, &player->mutex, &player->cond);
         //拷贝（间接赋值，拷贝结构体数据）
+
         *packet_data = packet;
         pthread_mutex_unlock(&player->mutex);
-        LOGI("queue:%#x, packet:%#x",queue,packet);
+//        LOGI("queue:%#x, packet:%#x",queue,packet);
     }
+    end:
+    return 0;
 }
 /**
  * 初始化音频，视频AVPacket队列，长度50
@@ -182,7 +211,7 @@ void player_alloc_queues(Player *player){
         Queue *queue = queue_init(PACKET_QUEUE_SIZE,(queue_fill_func)player_fill_packet);
         player->packets[i] = queue;
         //打印视频音频队列地址
-        LOGI("stream index:%d,queue:%#x",i,queue);
+//        LOGI("stream index:%d,queue:%#x",i,queue);
     }
 }
 /**
@@ -216,11 +245,15 @@ void decode_audio_pre(Player *player) {
     player->out_sample_fmt = AV_SAMPLE_FMT_S16;
     player->in_sample_fmt = codecContext->sample_fmt;
     player->in_sample_rate = player->out_sample_rate = codecContext->sample_rate;
+    LOGI("decode_audio_pre audio_index:%d  %d %s",player->audio_index,player->out_sample_rate,codecContext->codec->name)
     uint64_t in_ch_layout = codecContext->channel_layout;
     uint64_t  out_ch_layout = AV_CH_LAYOUT_STEREO;
+    LOGI("swresample swr_alloc")
     player->swr_ctx = swr_alloc();
+    LOGI("swresample swr_alloc_set_opts")
     swr_alloc_set_opts(player->swr_ctx,out_ch_layout,player->out_sample_fmt,player->out_sample_rate,
     in_ch_layout,player->in_sample_fmt,player->in_sample_rate,0,NULL);
+    LOGI("swresample swr_init")
     swr_init(player->swr_ctx);
     player->out_channal_nb = av_get_channel_layout_nb_channels(out_ch_layout);
 
@@ -232,6 +265,9 @@ void decode_audio_pre(Player *player) {
  */
 int64_t player_get_current_video_time(Player *player) {
     int64_t current_time = av_gettime();
+    if(player->start_time==0){
+        player->start_time = current_time;
+    }
     return current_time - player->start_time;
 }
 /**
@@ -243,22 +279,13 @@ void player_wait_for_frame(Player *player, int64_t stream_time,
     for(;;){
         int64_t current_video_time = player_get_current_video_time(player);
         int64_t sleep_time = stream_time - current_video_time;
-        if (sleep_time < -300000ll) {
-            // 300 ms late
-            int64_t new_value = player->start_time - sleep_time;
-            LOGI("player_wait_for_frame[%d] correcting %f to %f because late",
-                 stream_no, (av_gettime() - player->start_time) / 1000000.0,
-                 (av_gettime() - new_value) / 1000000.0);
 
-            player->start_time = new_value;
-            pthread_cond_broadcast(&player->cond);
-        }
+        LOGI("stream_time:%lld current_video_time:%lld sleep_time:%lld stream_no:%d",stream_time,current_video_time,sleep_time,stream_no)
 
         if (sleep_time <= MIN_SLEEP_TIME_US) {
-            // We do not need to wait if time is slower then minimal sleep time
-            break;
+            LOGI("goto end %d",stream_no)
+            goto end;
         }
-
         if (sleep_time > 500000ll) {
             // if sleep time is bigger then 500ms just sleep this 500ms
             // and check everything again
@@ -269,9 +296,9 @@ void player_wait_for_frame(Player *player, int64_t stream_time,
                                                   &player->mutex, sleep_time/1000ll);
 
         // just go further
-        LOGI("player_wait_for_frame[%d] finish", stream_no);
+        LOGI("stream_time player_wait_for_frame[%d] finish sleep_time =  %lld  stream_no : %d", stream_no ,sleep_time,stream_no)
     }
-    pthread_mutex_unlock(&player->mutex);
+    end:pthread_mutex_unlock(&player->mutex);
 }
 /**
  * 解码子线程函数（消费）
@@ -282,56 +309,37 @@ void* decode_data(void* arg){
     int stream_index = decoder_data->stream_index;
     //根据stream_index获取对应的AVPacket队列
     Queue *queue = player->packets[stream_index];
-
-    AVFormatContext *format_ctx = player->input_format_ctx;
-    //编码数据
-
-    //6.一阵一阵读取压缩的视频数据AVPacket
-    int video_frame_count = 0, audio_frame_count = 0;
+    LOGI("decode_data %d  %#x",stream_index,queue)
     for(;;){
+        if(player->isReadFinish&&(player->current_frame_nb[stream_index]>=player->frame_nb[stream_index])){
+            LOGI("decode finish stream_index:%d  %d  %d",stream_index,player->current_frame_nb[stream_index],player->frame_nb[stream_index])
+            break;
+        }
         //消费AVPacket
         pthread_mutex_lock(&player->mutex);
+        LOGI("decode  A")
         AVPacket *packet = (AVPacket*)queue_pop(queue,&player->mutex,&player->cond);
+        player->current_frame_nb[stream_index]+=1;
+        LOGI("decode  B")
         pthread_mutex_unlock(&player->mutex);
+        LOGI("decode %d  %d %d",stream_index,player->video_index,player->audio_index)
         if(stream_index == player->video_index){
             decode_video(player,packet);
-            LOGI("video_frame_count:%d",video_frame_count++);
+            LOGI("decode video_frame_count:%d",player->current_frame_nb[stream_index]);
         }else if(stream_index == player->audio_index){
             decode_audio(player,packet);
-            LOGI("audio_frame_count:%d",audio_frame_count++);
+            LOGI("decode audio_frame_count:%d ",player->current_frame_nb[stream_index]);
         }
 
     }
+    LOGI("decode_data %d end",stream_index)
+    return 0;
 }
-//void *decode_data(void* arg){
-//    Player* player = (Player*)arg;
-//    pthread_t tid = pthread_self();
-//    int index= -1;
-//    if(tid==player->decode_threads[player->video_index]){
-//        index=player->video_index;
-//    }else{
-//        index = player->audio_index;
-//    }
-//    AVFormatContext* format_ctx = player->input_format_ctx;
-//    AVPacket* packet = (AVPacket*)av_malloc(sizeof(AVPacket));
-//    int video_frame_count = 0;
-//    while( av_read_frame(format_ctx,packet)>=0){
-//        if(packet->stream_index == index&&packet->stream_index == player->video_index){
-//            decode_video(player,packet);
-//            LOGI("video_frame_count:%d",video_frame_count++)
-//        }else if(packet->stream_index == index&&packet->stream_index ==player->audio_index){
-//            decode_audio(player,packet);
-//            LOGI("audio_frame_count:%d",video_frame_count++)
-//        }else{
-//            LOGI("CANCEL %d",index)
-//        }
-//        av_free_packet(packet);
-//    }
-//}
 
 void decode_audio(Player *player, AVPacket *packet) {
     AVFormatContext *input_format_ctx = player->input_format_ctx;
-    AVStream *stream = input_format_ctx->streams[player->video_index];
+    AVStream *stream = input_format_ctx->streams[player->audio_index];
+    LOGI("audio time_base.den : %d %lld",stream->time_base.den,stream->nb_frames)
 
     AVCodecContext* codecContext = player->input_codec_ctx[player->audio_index];
     AVFrame* frame = av_frame_alloc();
@@ -341,13 +349,15 @@ void decode_audio(Player *player, AVPacket *packet) {
     if(got_frame>0){
         swr_convert(player->swr_ctx, &out_buffer,MAX_AUDIO_FRAME_SIZE,
                     (const uint8_t **) frame->data, frame->nb_samples);
+//        LOGI("swresample swr_convert 2")
         int out_buffer_size = av_samples_get_buffer_size(NULL,player->out_channal_nb,frame->nb_samples,player->out_sample_fmt,1);
 
         int64_t pts = packet->pts;
+//        LOGI("audio_frame %lld  %lld",pts,AV_NOPTS_VALUE)
         if (pts != AV_NOPTS_VALUE) {
             player->audio_clock = av_rescale_q(pts, stream->time_base, AV_TIME_BASE_Q);
-            //				av_q2d(stream->time_base) * pts;
-            LOGI("player_write_audio - read from pts");
+            double time = 				av_q2d(stream->time_base) * pts;//av_q2d计算一帧时间
+            LOGI("audio_frame wait  %lld %f  %d", player->audio_clock,time,player->audio_index);
             player_wait_for_frame(player,
                                   player->audio_clock + AUDIO_TIME_ADJUST_US, player->audio_index);
         }
@@ -365,31 +375,105 @@ void decode_audio(Player *player, AVPacket *packet) {
 
         javaVM->DetachCurrentThread();
 //        usleep(16000);
+        av_free(out_buffer);
     }
     av_frame_free(&frame);
 }
-
+void packet_free_func(void* packet){
+    AVPacket *packet1 = (AVPacket *)packet;
+    av_free_packet(packet1);
+};
+typedef struct
+{
+    unsigned int   bfSize;
+    unsigned short bfReserved1;
+    unsigned short bfReserved2;
+    unsigned int   bfOffBits;
+} MyBITMAPFILEHEADER;
+typedef struct
+{
+    unsigned int   biSize;
+    int            biWidth;
+    int            biHeight;
+    unsigned short biPlanes;
+    unsigned short biBitCount;
+    unsigned int   biCompression;
+    unsigned int   biSizeImage;
+    int            biXPelsPerMeter;
+    int            biYPelsPerMeter;
+    unsigned int   biClrUsed;
+    unsigned int   biClrImportant;
+} MyBITMAPINFOHEADER;
+void savebmp(Player *player,unsigned char *rgbbuf,const char *filename,int width,int height)
+{
+    int bpp = 32;
+    MyBITMAPFILEHEADER bfh;
+    MyBITMAPINFOHEADER bih;
+    unsigned short bfType=0x4d42;
+    bfh.bfReserved1=0;
+    bfh.bfReserved2=0;
+    bfh.bfSize=2+sizeof(MyBITMAPFILEHEADER)+sizeof(MyBITMAPINFOHEADER)+width*height*bpp/8;
+    bfh.bfOffBits=0x36;
+    bih.biSize=sizeof(MyBITMAPINFOHEADER);
+    bih.biWidth=width;
+    bih.biHeight=height;
+    bih.biPlanes=1;
+    bih.biBitCount=bpp;
+    bih.biCompression=0;
+    bih.biSizeImage=0;
+    bih.biXPelsPerMeter=5000;
+    bih.biYPelsPerMeter=5000;
+    bih.biClrUsed=0;
+    bih.biClrImportant=0;
+    FILE *file=fopen(filename,"wb");
+    if(!file){
+        LOGE("Could not write file")
+        return;
+    }
+    fwrite(&bfType,sizeof(bfType),1,file);
+    fwrite(&bfh,sizeof(bfh),1,file);
+    fwrite(&bih,sizeof(bih),1,file);
+    fwrite(rgbbuf,width*height*bpp/8,1,file);
+    fclose(file);
+}
 void decode_video(Player *player, AVPacket *packet) {
     AVFrame* yuv_frame = av_frame_alloc();
     AVFrame* rgb_frame = av_frame_alloc();
     AVFormatContext *input_format_ctx = player->input_format_ctx;
     AVStream *stream = input_format_ctx->streams[player->video_index];
+    LOGI("video time_base.den : %d %lld",stream->time_base.den,stream->nb_frames)
     ANativeWindow_Buffer out_buffer;
     AVCodecContext *codec_ctx = player->input_codec_ctx[player->video_index];
     int gotFrame;
     avcodec_decode_video2(codec_ctx,yuv_frame,&gotFrame,packet);
+    SwsContext * swsContext = sws_getContext(codec_ctx->width,codec_ctx->height,codec_ctx->pix_fmt,
+                   codec_ctx->width,codec_ctx->height,AV_PIX_FMT_RGBA,//PIX_FMT_BGR24  AV_PIX_FMT_RGBA
+                   SWS_BICUBIC,NULL,NULL,NULL);
     if(gotFrame){
         ANativeWindow_setBuffersGeometry(player->nativeWindow,
         codec_ctx->width,codec_ctx->height,WINDOW_FORMAT_RGBA_8888);
         ANativeWindow_lock(player->nativeWindow,&out_buffer,NULL);
         avpicture_fill((AVPicture*)rgb_frame,
                        (const uint8_t *) out_buffer.bits, AV_PIX_FMT_RGBA, codec_ctx->width, codec_ctx->height);
-        libyuv::I420ToARGB(yuv_frame->data[0], yuv_frame->linesize[0],
-                                   yuv_frame->data[2], yuv_frame->linesize[2],
-                                   yuv_frame->data[1], yuv_frame->linesize[1],
-                                   rgb_frame->data[0], rgb_frame->linesize[0],
-                                   codec_ctx->width, codec_ctx->height);
-        LOGI("%d   %d %d",codec_ctx->width, codec_ctx->height,rgb_frame->linesize[0])
+        //转换为rgb格式
+        sws_scale(swsContext,(const uint8_t *const *)yuv_frame->data,yuv_frame->linesize,0,
+                  yuv_frame->height,rgb_frame->data,
+                  rgb_frame->linesize);
+
+        LOGE("frame 宽%d,高%d",yuv_frame->width,yuv_frame->height);
+        LOGE("rgb格式 宽%d,高%d",rgb_frame->width,rgb_frame->height);
+        if(yuv_frame->key_frame) {
+            char file[50];
+            sprintf(file, "/storage/emulated/0/kugou/mv/bmp/%d.bmp",
+                    player->current_frame_nb[player->video_index]);
+            savebmp(player, rgb_frame->data[0], file, yuv_frame->width, yuv_frame->height);
+        }
+//        libyuv::I420ToARGB(yuv_frame->data[0], yuv_frame->linesize[0],
+//                                   yuv_frame->data[2], yuv_frame->linesize[2],
+//                                   yuv_frame->data[1], yuv_frame->linesize[1],
+//                                   rgb_frame->data[0], rgb_frame->linesize[0],
+//                                   codec_ctx->width, codec_ctx->height);
+        LOGI("video width:%d height:%d linesize:%d",codec_ctx->width, codec_ctx->height,rgb_frame->linesize[0])
         //计算延迟
         int64_t pts = av_frame_get_best_effort_timestamp(yuv_frame);
         //转换（不同时间基时间转换）
@@ -419,6 +503,7 @@ void init_codec_context(Player *player,int index) {
         LOGE("解码器打开失败")
         return;
     }
+    LOGI("解码器名称：%s  %d",codec->name,index)
     player->input_codec_ctx[index] = codecContext;
 }
 
@@ -434,13 +519,16 @@ void init_input_format_ctx(Player *player, const char *path) {
         return;
     }
     player->streams_num = format_ctx->nb_streams;
+    player->streams_num = 2;
     LOGI("captrue_streams_no:%d",player->streams_num);
     int i;
-    for(i=0;i<format_ctx->nb_streams;i++){
+    for(i=0;i<player->streams_num;i++){
         if(format_ctx->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO){
+            LOGI("video_index = %d",i)
             player->video_index = i;
         }
         if(format_ctx->streams[i]->codec->codec_type == AVMEDIA_TYPE_AUDIO){
+            LOGI("audio_index = %d",i)
             player->audio_index = i;
         }
     }

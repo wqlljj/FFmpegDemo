@@ -5,6 +5,8 @@ import android.media.AudioTrack;
 import android.os.Build;
 import android.util.Log;
 
+import java.io.File;
+
 /**
  * Created by cloud on 2019/4/28.
  */
@@ -36,10 +38,20 @@ public class MediaPlayAPI {
                 sampleRate,channelConfig,audioFormat,
                 bufferSize,AudioTrack.MODE_STREAM);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            audioTrack.setVolume(0.1f);
+            audioTrack.setVolume(0.05f);
         }else{
-            audioTrack.setStereoVolume(0.1f,0.1f);
+            audioTrack.setStereoVolume(0.05f,0.05f);
+        }
+        if(!new File("/storage/emulated/0/kugou/mv/bmp/").exists()){
+           mkdir("/storage/emulated/0/kugou/mv/bmp/");
         }
         return audioTrack;
+    }
+
+    public static void mkdir(String file){
+        File f = new File(file);
+        if(!f.exists()){
+            f.mkdirs();
+        }
     }
 }

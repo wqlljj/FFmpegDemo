@@ -12,6 +12,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.Surface;
 import android.view.View;
+import android.widget.Toast;
 
 import com.leon.lfilepickerlibrary.LFilePicker;
 
@@ -90,6 +91,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private void handleAction(int action){
         String path = listPath.get(0);
         Log.i(TAG, "handleAction: "+path);
+        toast(path);
         switch (action) {
             case ACTION_PLAY_AUDIO:
                 Log.e(TAG, "handleAction: "+test() );
@@ -117,7 +119,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             path= Environment.getExternalStorageDirectory().getAbsolutePath()
                     + File.separator + "kugou"
                     + File.separator + "mv";
-            filter = new String[]{".mp4",".avi","."};
+            filter = new String[]{".mp4",".avi",".flv",".wmv",".rmvb",".mov",".3gp",".swf"};
             title = "选择视频";
         }else if(chooseReqCode == AUDIOREQCODE){
             path = Environment.getExternalStorageDirectory().getAbsolutePath()
@@ -151,10 +153,24 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         handleAction(action);
                     }
                 },1000);
+            }else{
+                toast("未选择文件");
+                Log.i(TAG, "onActivityResult: listPath.size()==0");
             }
         }
         super.onActivityResult(requestCode, resultCode, data);
     }
+
+    private void toast(final String msg) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                Toast.makeText(MainActivity.this,msg, Toast.LENGTH_SHORT).show();
+            }
+        });
+
+    }
+
     public native void play(String path, Surface surface);
     public static native String test();
     @NeedsPermission({Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.WAKE_LOCK})

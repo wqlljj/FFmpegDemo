@@ -74,14 +74,16 @@ void* queue_push(Queue *queue,pthread_mutex_t *mutex, pthread_cond_t *cond){
 		if(next_to_write != queue->next_to_read){
 			break;
 		}
+        LOGI("queue_push pthread 阻塞 %#x",queue)
 		//阻塞
 		pthread_cond_wait(cond,mutex);
 	}
 
 	queue->next_to_write = next_to_write;
-	LOGI("queue_push queue:%#x, %d",queue,current);
+//	LOGI("queue_push queue:%#x, %d",queue,current);
 	//通知
 	pthread_cond_broadcast(cond);
+    LOGI("queue_push pthread pthread 唤醒")
 
 	return queue->tab[current];
 }
@@ -90,18 +92,21 @@ void* queue_push(Queue *queue,pthread_mutex_t *mutex, pthread_cond_t *cond){
  * 弹出元素（消费）
  */
 void* queue_pop(Queue *queue,pthread_mutex_t *mutex, pthread_cond_t *cond){
+
 	int current = queue->next_to_read;
 	for(;;){
 		if(queue->next_to_read != queue->next_to_write){
 			break;
 		}
+        LOGI("queue_pop pthread 阻塞 %#x",queue)
 		pthread_cond_wait(cond,mutex);
 	}
 
 	queue->next_to_read = queue_get_next(queue,current);
-	LOGI("queue_pop queue:%#x, %d",queue,current);
+//	LOGI("queue_pop queue:%#x, %d",queue,current);
 
 	pthread_cond_broadcast(cond);
+    LOGI("queue_pop pthread 唤醒")
 	return queue->tab[current];
 }
 
